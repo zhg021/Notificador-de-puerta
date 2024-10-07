@@ -19,8 +19,8 @@
 #include "driver/adc.h"  // Necesario para la funcionalidad de ADC
 
 #define led GPIO_NUM_13
-#define EXAMPLE_ESP_WIFI_SSID      "INFINITUM3B07" //nombre de tu red
-#define EXAMPLE_ESP_WIFI_PASS      "bCW2FtJZj2" //clave wifi
+#define EXAMPLE_ESP_WIFI_SSID      "" //nombre de tu red
+#define EXAMPLE_ESP_WIFI_PASS      "" //clave wifi
 #define EXAMPLE_ESP_MAXIMUM_RETRY  5 //max intentos
 
 #define server_ip "192.168.1.77"
