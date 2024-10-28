@@ -26,3 +26,26 @@ void set_pins(){
 }
 
 void read_door(){
+    while (1) {
+        int switch_state = gpio_get_level(INTERRUPT_PIN);
+        if (switch_state == 1) {
+            if (one_time1 == 1)
+            {
+                printf("Interruptor cerrado\n");
+                one_time1 = 0;
+                one_time2 = 1;
+            }
+        } else {
+            if (one_time2 == 1)
+            {
+                printf("Interruptor abierto\n");
+                one_time2 = 0;
+                one_time1 = 1;
+                //envia por correo algo 
+                
+            }
+            //parlante
+        }
+        vTaskDelay(500 / portTICK_PERIOD_MS); // wait N ms 
+    }
+}
