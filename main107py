@@ -5,20 +5,28 @@ import socket
 import _thread  # Para manejar múltiples hilos
 import ssl
 import ujson
+import os
 
 # Variables globales
 correo = "ejemplo@gmail.com"
 ubicacion = ""
 estado_interruptor = "Desconocido"  # Almacena el estado del interruptor
-ip_servidor = '201.171.5.201'
+ip_servidor = '201.170.241.184'
 puerto_servidor = 1997
 
-# Configuracion del pin de interrupción
+# Variables globales para Wi-Fi
+ssid_wifi = ""
+password_wifi = ""
+
+# Configuración del pin de interrupción
 INTERRUPT_PIN = 13
 interrupt_pin = Pin(INTERRUPT_PIN, Pin.IN, Pin.PULL_UP)
 
-BUZZER_GPIO = 4
-buzzer_pwm = PWM(Pin(BUZZER_GPIO))
+# Definir el GPIO del buzzer
+BUZZER_GPIO =4
+
+# Crear un objeto PWM para el buzzer
+buzzer = PWM(Pin(BUZZER_GPIO))
 
 cmd = "cmd"
 estado = ""
@@ -29,34 +37,72 @@ one_time2 = False
 
 def buzz():
     """
-    Configura y activa el buzzer con una frecuencia de 1 kHz y un ciclo de trabajo del 50%.
+    Inicia el buzzer con una frecuencia de 1000 Hz y un duty cycle del 50%.
     """
-    # Configurar la frecuencia a 1 kHz
-    buzzer_pwm.freq(1000)
-    # Configurar el duty cycle al 50% (máximo de 1023 en MicroPython)
-    buzzer_pwm.duty(512)
-    print("Buzzer activado")
+    buzzer.freq(1000)  # Establece la frecuencia a 1000 Hz
+    buzzer.duty_u16(32768)  # Establece el duty cycle al 50% (65536 / 2)
 
 def stop_buzz():
     """
-    Detiene el buzzer poniendo el ciclo de trabajo a 0.
+    Detiene el buzzer estableciendo el duty cycle a 0.
     """
-    # Configurar el duty cycle a 0 para detener el buzzer
-    buzzer_pwm.duty(0)
-    print("Buzzer detenido")
+    #buzzer.freq(0)
+    buzzer.duty_u16(0)  # Duty cycle al 0%
+    
+
+# Cargar configuración de la memoria
+def cargar_configuracion():
+    global correo, ubicacion, ssid_wifi, password_wifi
+    try:
+        with open('config.json', 'r') as f:
+            config = ujson.load(f)
+            correo = config.get('correo', correo)
+            ubicacion = config.get('ubicacion', ubicacion)
+            ssid_wifi = config.get('ssid_wifi', ssid_wifi)
+            password_wifi = config.get('password_wifi', password_wifi)
+            print("Configuración cargada exitosamente.")
+    except Exception as e:
+        print(f"Error al cargar la configuración: {e}")
+
+# Guardar configuración en la memoria
+def guardar_configuracion():
+    global correo, ubicacion, ssid_wifi, password_wifi
+    try:
+        config = {
+            'correo': correo,
+            'ubicacion': ubicacion,
+            'ssid_wifi': ssid_wifi,
+            'password_wifi': password_wifi
+        }
+        with open('config.json', 'w') as f:
+            ujson.dump(config, f)
+        print("Configuración guardada exitosamente.")
+    except Exception as e:
+        print(f"Error al guardar la configuración: {e}")
 
 # Configurar el ESP32 como Access Point
 def configurar_ap():
     ap = network.WLAN(network.AP_IF)
     ap.active(True)
     ssid = "ConfigAP"
-    password = "12345678"  # Minimo 8 caracteres
+    password = "12345678"  # Mínimo 8 caracteres
     ap.config(essid=ssid, password=password)
     ap.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '8.8.8.8'))
     print("Access Point activado:")
     print("  SSID:", ssid)
     print("  IP:", ap.ifconfig()[0])
     return ap
+
+# Configurar Wi-Fi al iniciar
+def configurar_wifi_auto():
+    global ssid_wifi, password_wifi
+    if ssid_wifi and password_wifi:
+        station = configurar_wifi(ssid_wifi, password_wifi)
+        if station and station.isconnected():
+            print("Conexión Wi-Fi establecida automáticamente.")
+            return station
+    print("No se pudo conectar automáticamente a Wi-Fi.")
+    return None
 
 # Configurar Wi-Fi en modo cliente
 def configurar_wifi(ssid, password):
@@ -74,31 +120,36 @@ def configurar_wifi(ssid, password):
     print("Error al conectar a la red Wi-Fi.")
     return None
 
+def enviar_tcp(ip, puerto, var1, var2, var3, var4):
+    try:
+        # Crear el socket TCP
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((ip, puerto))
+
+        # Crear un diccionario con las variables
+        data = f"cmd:{var2}:{var3}:{var4}"
+
+        # Enviar los datos codificados en UTF-8
+        sock.sendall(data.encode('utf-8'))
+        sock.close()
+        print("Datos enviados con éxito")
+
+    except Exception as e:
+        print(f"Error al enviar los datos: {e}")
+
 def send_tcp_message(cmd, email, ubicacion, estado, tcp_server_ip, tcp_server_port):
-    # Crear el mensaje
     message = f"{cmd}:{email}:{ubicacion}:{estado}"
     
-    # Configurar la dirección del servidor
     dest_addr = (tcp_server_ip, tcp_server_port)
     
     try:
-        # Crear el socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        print("Socket creado con éxito")
-        
-        # Conectar al servidor
         sock.connect(dest_addr)
-        print(f"Conectado al servidor {tcp_server_ip}:{tcp_server_port}")
-        
-        # Enviar el mensaje
         sock.sendall(message.encode('utf-8'))
+        sock.close()
         print(f"Mensaje enviado: {message}")
     except Exception as e:
         print(f"Error al enviar el mensaje: {e}")
-    finally:
-        # Cerrar el socket
-        sock.close()
-        print("Socket cerrado")
 
 # Hilo para monitorear el estado del interruptor
 def leer_estado_interruptor():
@@ -113,8 +164,8 @@ def leer_estado_interruptor():
                 one_time2 = True
                 
                 estado = 'Close'
-                send_tcp_message(cmd,correo,ubicacion,estado,ip_servidor,puerto_servidor)
-                #stop_buzz()
+                send_tcp_message(cmd, correo, ubicacion, estado, ip_servidor, puerto_servidor)
+            stop_buzz()
             
         else:
             if one_time2:
@@ -124,42 +175,40 @@ def leer_estado_interruptor():
                 one_time1 = True
                 
                 estado = 'Open'
-                send_tcp_message(cmd,correo,ubicacion,estado,ip_servidor,puerto_servidor)
-                #enviar_tcp(ip_servidor, puerto_servidor, "Open", correo, ubicacion, "Open")
-                #buzz()
+                send_tcp_message(cmd, correo, ubicacion, estado, ip_servidor, puerto_servidor)
+            buzz()
              
-        time.sleep(0.5)  # Evitar lecturas demasiado frecuentes
+        time.sleep(0.5)
 
 # Servidor UDP para recibir comandos
 def servidor_udp():
-    global correo, ubicacion, estado_interruptor  # Acceso a las variables globales
+    global correo, ubicacion, ssid_wifi, password_wifi, estado_interruptor
     
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket.bind(('0.0.0.0', 12345))  # Escuchar en el puerto 12345
+    udp_socket.bind(('0.0.0.0', 12345))
     print("Servidor UDP activo en el puerto 12345, esperando mensajes...")
     
-    station = None  # Para guardar la instancia de Wi-Fi cliente
+    station = None
     while True:
-        data, addr = udp_socket.recvfrom(1024)  # Recibir datos
+        data, addr = udp_socket.recvfrom(1024)
         mensaje = data.decode().strip()
         print("Mensaje recibido de:", addr, "Contenido:", mensaje)
         
-        # Procesar comandos recibidos
         if mensaje.startswith("CONFIG:wifi:"):
             try:
                 _, _, ssid, password = mensaje.split(":")
-                print("Configurando Wi-Fi con SSID:", ssid, "y contraseña:", password)
+                ssid_wifi = ssid
+                password_wifi = password
+                guardar_configuracion()
                 station = configurar_wifi(ssid, password)
-                if station:
+                if station and station.isconnected():
                     udp_socket.sendto(b"ACK:WiFi conectado", addr)
                 else:
                     udp_socket.sendto(b"NACK:Error al conectar WiFi", addr)
             except Exception as e:
-                print("Error al procesar mensaje Wi-Fi:", e)
-                udp_socket.sendto(b"NACK:Formato WiFi invalido", addr)
+                udp_socket.sendto(b"NACK:Formato WiFi inválido", addr)
         
         elif mensaje.startswith("GET:interruptor"):
-            # Responder con el estado actual del interruptor
             respuesta = f"Estado del interruptor: {estado_interruptor}"
             udp_socket.sendto(respuesta.encode(), addr)
         
@@ -167,32 +216,39 @@ def servidor_udp():
             try:
                 _, _, nuevo_correo = mensaje.split(":")
                 correo = nuevo_correo
-                print("Correo configurado a:", correo)
+                guardar_configuracion()
                 udp_socket.sendto(b"ACK:Correo configurado", addr)
             except Exception as e:
-                print("Error al procesar mensaje de correo:", e)
-                udp_socket.sendto(b"NACK:Formato correo invalido", addr)
+                udp_socket.sendto(b"NACK:Formato correo inválido", addr)
         
         elif mensaje.startswith("CONFIG:ubicacion:"):
             try:
                 _, _, nueva_ubicacion = mensaje.split(":")
                 ubicacion = nueva_ubicacion
-                print("Ubicación configurada a:", ubicacion)
+                guardar_configuracion()
                 udp_socket.sendto(b"ACK:Ubicación configurada", addr)
             except Exception as e:
-                print("Error al procesar mensaje de ubicación:", e)
-                udp_socket.sendto(b"NACK:Formato ubicacion invalido", addr)
+                udp_socket.sendto(b"NACK:Formato ubicación inválido", addr)
         
         else:
             udp_socket.sendto(b"NACK:Comando no reconocido", addr)
 
 # Programa principal
 def main():
+    cargar_configuracion()  # Cargar configuración guardada
+    stop_buzz()
     ap = configurar_ap()  # Configurar el Access Point
+    station = configurar_wifi_auto()  # Intentar conectar automáticamente a Wi-Fi
+    
+    if not (station and station.isconnected()):
+        print("No se pudo conectar automáticamente a Wi-Fi. Accediendo al modo AP.")
+        _thread.start_new_thread(servidor_udp, ())  # Iniciar el servidor UDP en un hilo
+    else:
+        print("Modo AP desactivado. Dispositivo conectado a Wi-Fi.")
     _thread.start_new_thread(leer_estado_interruptor, ())  # Iniciar monitoreo del interruptor en un hilo
-    servidor_udp()  # Iniciar el servidor UDP
-    ap.active(False)  # Desactivar el modo AP después de configurar Wi-Fi
-    print("Modo AP desactivado. Dispositivo conectado a Wi-Fi.")
+
 
 if __name__ == "__main__":
     main()
+
+
